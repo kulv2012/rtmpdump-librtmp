@@ -52,7 +52,7 @@ EXT_darwin=
 EXT_mingw=.exe
 EXT=$(EXT_$(SYS))
 
-PROGS=rtmpdump  simplertmpdump 
+PROGS=rtmpdump  simplertmpdump samplepublish publishdirect dumpdirect
 
 all:	$(LIBRTMP) $(PROGS)
 
@@ -64,7 +64,7 @@ install:	$(PROGS)
 	@cd librtmp; $(MAKE) install
 
 clean:
-	rm -f *.o rtmpdump$(EXT) simplertmpdump
+	rm -f *.o rtmpdump$(EXT) simplertmpdump samplepublish publishdirect dumpdirect
 	@cd librtmp; $(MAKE) clean
 
 FORCE:
@@ -80,4 +80,21 @@ rtmpdump.o: rtmpdump.c $(INCRTMP) Makefile
 simplertmpdump: simplertmpdump.o
 	$(CC) $(LDFLAGS) -o $@$(EXT) $@.o $(LIBS) librtmp/librtmp.a
 
-rtmpdump.o: simplertmpdump.c $(INCRTMP) Makefile
+simplertmpdump.o: simplertmpdump.c $(INCRTMP) Makefile
+
+dumpdirect: dumpdirect.o
+	$(CC) $(LDFLAGS) -o $@$(EXT) $@.o $(LIBS) librtmp/librtmp.a
+
+dumpdirect.o: dumpdirect.c $(INCRTMP) Makefile
+
+
+
+samplepublish: samplepublish.o
+	$(CC) $(LDFLAGS) -o $@$(EXT) $@.o $(LIBS) librtmp/librtmp.a
+
+samplepublish.o: samplepublish.c $(INCRTMP) Makefile
+
+publishdirect: publishdirect.o
+	$(CC) $(LDFLAGS) -o $@$(EXT) $@.o $(LIBS) librtmp/librtmp.a
+
+publishdirect.o: publishdirect.c $(INCRTMP) Makefile

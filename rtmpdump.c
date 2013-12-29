@@ -394,7 +394,7 @@ main(int argc, char **argv)
 	int port = -1;
 	int protocol = RTMP_PROTOCOL_UNDEFINED;
 	int retries = 0;
-	int bLiveStream = FALSE;	// is it a live stream? then we can't seek/resume
+	int bLiveStream = TRUE;	// is it a live stream? then we can't seek/resume
 	int bRealtimeStream = FALSE;  // If true, disable the BUFX hack (be patient)
 	int bHashes = FALSE;		// display byte counters not hashes by default
 
@@ -726,6 +726,9 @@ main(int argc, char **argv)
 	/* Try to keep the stream moving if it pauses on us */
 	if (!bLiveStream && !bRealtimeStream && !(protocol & RTMP_FEATURE_HTTP))
 		rtmp.Link.lFlags |= RTMP_LF_BUFX;
+	if( bLiveStream ){
+		rtmp.Link.lFlags |= RTMP_LF_LIVE ;
+	}
 
 	if (!file)
 	{

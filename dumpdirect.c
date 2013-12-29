@@ -161,7 +161,7 @@ int main(int argc, char **argv)
 
 	int nStatus = RD_SUCCESS;
 	int bStdoutMode = TRUE;	// if true print the stream directly to stdout, messages go to stderr
-	int bLiveStream = FALSE;	// is it a live stream? then we can't seek/resume
+	int bLiveStream = TRUE;	// is it a live stream? then we can't seek/resume
 
 	long int timeout = DEF_TIMEOUT;	// timeout connection after 120 seconds
 	RTMP rtmp = { 0 };
@@ -263,6 +263,9 @@ int main(int argc, char **argv)
 	/* Try to keep the stream moving if it pauses on us */
 	if (!bLiveStream )
 		rtmp.Link.lFlags |= RTMP_LF_BUFX;
+	else {
+		rtmp.Link.lFlags |= RTMP_LF_LIVE ;
+	}
 
 	while (!RTMP_ctrlC)
 	{

@@ -1020,18 +1020,18 @@ RTMP_GetNextMediaPacket(RTMP *r, RTMPPacket *packet)
 {
 	int bHasMediaPacket = 0;
 
-	while (!bHasMediaPacket && RTMP_IsConnected(r)
-			&& RTMP_ReadPacket(r, packet))
-	{
+	while (!bHasMediaPacket && RTMP_IsConnected(r)	&& RTMP_ReadPacket(r, packet))
+	{//不断的读取包，然后调用RTMP_ClientPacket进行分发处理
 		if (!RTMPPacket_IsReady(packet))
 		{
 			continue;
 		}
 
+		//根据不同的packet格式，进行解析
 		bHasMediaPacket = RTMP_ClientPacket(r, packet);
 
 		if (!bHasMediaPacket)
-		{
+		{//没用音频数据，不用管。
 			RTMPPacket_Free(packet);
 		}
 		else if (r->m_pausing == 3)
@@ -1056,8 +1056,7 @@ RTMP_GetNextMediaPacket(RTMP *r, RTMPPacket *packet)
 	if (bHasMediaPacket)
 		r->m_bPlaying = TRUE;
 	else if (r->m_sb.sb_timedout && !r->m_pausing)
-		r->m_pauseStamp = r->m_mediaChannel < r->m_channelsAllocatedIn ?
-			r->m_channelTimestamp[r->m_mediaChannel] : 0;
+		r->m_pauseStamp = r->m_mediaChannel < r->m_channelsAllocatedIn ? r->m_channelTimestamp[r->m_mediaChannel] : 0;
 
 	return bHasMediaPacket;
 }
@@ -2348,7 +2347,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
 			else
 			{//告诉服务端，我们的期望是什么，窗口大小，等
 				RTMP_SendServerBW(r);
-				RTMP_SendCtrl(r, 3, 0, 300);
+				RTMP_SendCtrl(r, 3, 0, r->m_nBufferMS);
 			}
 			RTMP_SendCreateStream(r);//因为服务端同意了我们的connect，所以这里发送createStream创建一个流
 			//创建完成后，会再次进如这个函数从而走到下面的av_createStream分支，从而发送play过去
@@ -2875,7 +2874,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 	packet->m_nChannel = (hbuf[0] & 0x3f);
 	header++;
 	if (packet->m_nChannel == 0)
-	{
+	{//Value 0 indicates the 2 byte form and an  ID in the range of 64-319 (the second byte + 64)
 		if (ReadN(r, (char *)&hbuf[1], 1) != 1)
 		{
 			RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet header 2nd byte",
@@ -2887,7 +2886,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 		header++;
 	}
 	else if (packet->m_nChannel == 1)
-	{
+	{//Value 1 indicates the 3 byte form and an ID in the range of 64-65599 ((the third byte)*256 + the second byte + 64)
 		int tmp;
 		if (ReadN(r, (char *)&hbuf[1], 2) != 2)
 		{
@@ -2900,11 +2899,12 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 		RTMP_Log(RTMP_LOGDEBUG, "%s, m_nChannel: %0x", __FUNCTION__, packet->m_nChannel);
 		header += 2;
 	}
-
-	nSize = packetSize[packet->m_headerType];
+	//Chunk Stream ID with value 2 is reserved for low-level protocol control messages and commands
+	
+	nSize = packetSize[packet->m_headerType];//获取这个m_headerType的头部类型长度是2,4,8,12字节
 
 	if (packet->m_nChannel >= r->m_channelsAllocatedIn)
-	{
+	{//realloc多分配10个信道资源供使用
 		int n = packet->m_nChannel + 10;
 		int *timestamp = realloc(r->m_channelTimestamp, sizeof(int) * n);
 		RTMPPacket **packets = realloc(r->m_vecChannelsIn, sizeof(RTMPPacket*) * n);
@@ -2918,6 +2918,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 			r->m_channelsAllocatedIn = 0;
 			return FALSE;
 		}
+		//将后面的清空
 		memset(r->m_channelTimestamp + r->m_channelsAllocatedIn, 0, sizeof(int) * (n - r->m_channelsAllocatedIn));
 		memset(r->m_vecChannelsIn + r->m_channelsAllocatedIn, 0, sizeof(RTMPPacket*) * (n - r->m_channelsAllocatedIn));
 		r->m_channelsAllocatedIn = n;
@@ -2925,26 +2926,23 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 
 	if (nSize == RTMP_LARGE_HEADER_SIZE)	/* if we get a full header the timestamp is absolute */
 		packet->m_hasAbsTimestamp = TRUE;
-
 	else if (nSize < RTMP_LARGE_HEADER_SIZE)
 	{				/* using values from the last message of this channel */
-		if (r->m_vecChannelsIn[packet->m_nChannel])
-			memcpy(packet, r->m_vecChannelsIn[packet->m_nChannel],
-					sizeof(RTMPPacket));
+		if (r->m_vecChannelsIn[packet->m_nChannel])//如果不是12字节的，那么头部时间戳可以复用。正好之前已经有这个信道的包了，所以直接拷贝一下。
+			memcpy(packet, r->m_vecChannelsIn[packet->m_nChannel], sizeof(RTMPPacket));
 	}
 
-	nSize--;
+	nSize--;//第一个字节已经读取了
 
 	if (nSize > 0 && ReadN(r, header, nSize) != nSize)
-	{
-		RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet header. type: %x",
-				__FUNCTION__, (unsigned int)hbuf[0]);
+	{//读取剩余的头部大小
+		RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet header. type: %x", __FUNCTION__, (unsigned int)hbuf[0]);
 		return FALSE;
 	}
 
-	hSize = nSize + (header - (char *)hbuf);
+	hSize = nSize + (header - (char *)hbuf);//nSize正常12/8/4/2字节的头部刚才已经读了的+ 可变的m_nChannel长度.等于头部的总长度
 
-	if (nSize >= 3)
+	if (nSize >= 3)//4个字节型
 	{
 		packet->m_nTimeStamp = AMF_DecodeInt24(header);
 
@@ -3006,8 +3004,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
 
 	if (ReadN(r, packet->m_body + packet->m_nBytesRead, nChunk) != nChunk)
 	{
-		RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet body. len: %u",
-				__FUNCTION__, packet->m_nBodySize);
+		RTMP_Log(RTMP_LOGERROR, "%s, failed to read RTMP packet body. len: %u", __FUNCTION__, packet->m_nBodySize);
 		return FALSE;
 	}
 
@@ -3734,9 +3731,9 @@ restart:
  * Returns -3 if Play.Close/Stop, -2 if fatal error, -1 if no more media
  * packets, 0 if ignorable error, >0 if there is a media packet
  */
-	static int
-Read_1_Packet(RTMP *r, char *buf, unsigned int buflen)
-{
+int totalbodysize = 0 ;
+static int Read_1_Packet(RTMP *r, char *buf, unsigned int buflen)
+{//读取一个media数据包，然后对其进行flv协议解析
 	uint32_t prevTagSize = 0;
 	int rtnGetNextMediaPacket = 0, ret = RTMP_READ_EOF;
 	RTMPPacket packet = { 0 };
@@ -3751,6 +3748,8 @@ Read_1_Packet(RTMP *r, char *buf, unsigned int buflen)
 	{
 		char *packetBody = packet.m_body;
 		unsigned int nPacketLen = packet.m_nBodySize;
+		totalbodysize += packet.m_nBodySize ;
+		//printf("packet.m_nBodySize total=%d\n", totalbodysize);
 
 		/* Return RTMP_READ_COMPLETE if this was completed nicely with
 		 * invoke message Play.Stop or Play.Complete
@@ -3764,20 +3763,17 @@ Read_1_Packet(RTMP *r, char *buf, unsigned int buflen)
 			break;
 		}
 
-		r->m_read.dataType |= (((packet.m_packetType == RTMP_PACKET_TYPE_AUDIO) << 2) |
-				(packet.m_packetType == RTMP_PACKET_TYPE_VIDEO));
+		r->m_read.dataType |= (((packet.m_packetType == RTMP_PACKET_TYPE_AUDIO) << 2) |	(packet.m_packetType == RTMP_PACKET_TYPE_VIDEO));
 
 		if (packet.m_packetType == RTMP_PACKET_TYPE_VIDEO && nPacketLen <= 5)
 		{
-			RTMP_Log(RTMP_LOGDEBUG, "ignoring too small video packet: size: %d",
-					nPacketLen);
+			RTMP_Log(RTMP_LOGDEBUG, "ignoring too small video packet: size: %d", nPacketLen);
 			ret = RTMP_READ_IGNORE;
 			break;
 		}
 		if (packet.m_packetType == RTMP_PACKET_TYPE_AUDIO && nPacketLen <= 1)
 		{
-			RTMP_Log(RTMP_LOGDEBUG, "ignoring too small audio packet: size: %d",
-					nPacketLen);
+			RTMP_Log(RTMP_LOGDEBUG, "ignoring too small audio packet: size: %d", nPacketLen);
 			ret = RTMP_READ_IGNORE;
 			break;
 		}
@@ -3788,8 +3784,7 @@ Read_1_Packet(RTMP *r, char *buf, unsigned int buflen)
 			break;
 		}
 #ifdef _DEBUG
-		RTMP_Log(RTMP_LOGDEBUG, "type: %02X, size: %d, TS: %d ms, abs TS: %d",
-				packet.m_packetType, nPacketLen, packet.m_nTimeStamp,
+		RTMP_Log(RTMP_LOGDEBUG, "type: %02X, size: %d, TS: %d ms, abs TS: %d", 	packet.m_packetType, nPacketLen, packet.m_nTimeStamp,
 				packet.m_hasAbsTimestamp);
 		if (packet.m_packetType == RTMP_PACKET_TYPE_VIDEO)
 			RTMP_Log(RTMP_LOGDEBUG, "frametype: %02X", (*packetBody & 0xf0));
@@ -3951,10 +3946,9 @@ stopKeyframeSearch:
 						}
 					}
 				}
-			}
+			}//RESUME end
 
-			if (packet.m_nTimeStamp > 0
-					&& (r->m_read.flags & (RTMP_READ_GOTKF|RTMP_READ_GOTFLVK)))
+			if (packet.m_nTimeStamp > 0	&& (r->m_read.flags & (RTMP_READ_GOTKF|RTMP_READ_GOTFLVK)))
 			{
 				/* another problem is that the server can actually change from
 				 * 09/08 video/audio packets to an FLV stream or vice versa and
@@ -3973,11 +3967,9 @@ stopKeyframeSearch:
 			/* skip till we find our keyframe
 			 * (seeking might put us somewhere before it)
 			 */
-			if (!(r->m_read.flags & RTMP_READ_GOTKF) &&
-					packet.m_packetType != RTMP_PACKET_TYPE_FLASH_VIDEO)
+			if (!(r->m_read.flags & RTMP_READ_GOTKF) &&	packet.m_packetType != RTMP_PACKET_TYPE_FLASH_VIDEO)
 			{
-				RTMP_Log(RTMP_LOGWARNING,
-						"Stream does not start with requested frame, ignoring data... ");
+				RTMP_Log(RTMP_LOGWARNING, "Stream does not start with requested frame, ignoring data... ");
 				r->m_read.nIgnoredFrameCounter++;
 				if (r->m_read.nIgnoredFrameCounter > MAX_IGNORED_FRAMES)
 					ret = RTMP_READ_ERROR;	/* fatal error, couldn't continue stream */
@@ -4026,9 +4018,9 @@ stopKeyframeSearch:
 
 		/* calculate packet size and allocate slop buffer if necessary */
 		size = nPacketLen +
-			((packet.m_packetType == RTMP_PACKET_TYPE_AUDIO
-			  || packet.m_packetType == RTMP_PACKET_TYPE_VIDEO
-			  || packet.m_packetType == RTMP_PACKET_TYPE_INFO) ? 11 : 0) +
+			( (	packet.m_packetType == RTMP_PACKET_TYPE_AUDIO || 
+				packet.m_packetType == RTMP_PACKET_TYPE_VIDEO || 
+				packet.m_packetType == RTMP_PACKET_TYPE_INFO ) ? 11 : 0) +
 			(packet.m_packetType != RTMP_PACKET_TYPE_FLASH_VIDEO ? 4 : 0);
 
 		if (size + 4 > buflen)
@@ -4232,7 +4224,7 @@ fail:
 
 	/* first time thru */
 	if (!(r->m_read.flags & RTMP_READ_HEADER))
-	{
+	{//第一次，读取头部数据。拼接头
 		if (!(r->m_read.flags & RTMP_READ_RESUME))
 		{
 			char *mybuf = malloc(HEADERBUF), *end = mybuf + HEADERBUF;
@@ -4240,6 +4232,7 @@ fail:
 			r->m_read.buf = mybuf;
 			r->m_read.buflen = HEADERBUF;
 
+			//第一次， 在前面插入flv的头
 			memcpy(mybuf, flvHeader, sizeof(flvHeader));
 			r->m_read.buf += sizeof(flvHeader);
 			r->m_read.buflen -= sizeof(flvHeader);

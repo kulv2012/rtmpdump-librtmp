@@ -1,11 +1,17 @@
 //运行指令：  ./simplertmpdump --live -i "rtmp://211.151.86.220:1936/live/hwtest1" -o aaa.mp3 -m 10
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
+#include <unistd.h> 
 #include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 #include <signal.h>		// to catch Ctrl-C
 #include <getopt.h>
+#include <stdarg.h>
+#include <string.h>
+#include <time.h>
+#include <sys/time.h>
 
 #include "librtmp/rtmp_sys.h"
 #include "librtmp/log.h"
@@ -26,8 +32,43 @@ uint32_t nIgnoredFrameCounter = 0;
 
 FILE *file = 0;
 
-	void
-sigIntHandler(int sig)
+
+char static_str[1024] ;
+#define KULV_LOG(fmt, arg...) writelog_in("[pid:%d] [%s] [%s:%d]" fmt "\n", getpid(), getstrtime(static_str, 1024), __FILE__, __LINE__, ## arg)
+
+char *getstrtime(char *t_ime, size_t t_ime_size) {
+	time_t tt;
+	struct tm vtm;
+
+	time(&tt);
+	localtime_r(&tt, &vtm);
+	snprintf(t_ime, t_ime_size, "%04d/%02d/%02d %02d:%02d:%02d",vtm.tm_year+1900, vtm.tm_mon+1, vtm.tm_mday, vtm.tm_hour, vtm.tm_min, vtm.tm_sec);
+	return t_ime;
+}
+void writelog_in(  const char *fmt, ... ) {
+	char tmpstr[1024] ;
+
+	static int logfd = -2 ;
+	if(logfd == -2){
+		//logfd = open("./log.simplertmpdump", O_WRONLY|O_APPEND|O_CREAT, 0666) ;
+		logfd = open("./log.simplertmpdump", O_WRONLY|O_CREAT|O_APPEND, 0666) ;
+	}
+	else if( logfd < 0 ){
+		logfd = 0 ;
+	}
+
+	va_list va;
+	va_start(va, fmt); 
+	int len = vsnprintf(tmpstr, 1024, fmt, va);
+	va_end(va);
+
+	write( logfd, tmpstr, len) ;
+	//write( logfd, tmpstr, len) ;
+}
+
+
+
+void sigIntHandler(int sig)
 {
 	RTMP_ctrlC = TRUE;
 	RTMP_LogPrintf("Caught signal: %d, cleaning up, just a second...\n", sig);
@@ -70,6 +111,8 @@ int Download(RTMP * rtmp, FILE * file, int bStdoutMode, int bLiveStream)
 
 	buffer = (char *) malloc(bufferSize);
 
+	unsigned long lasttimestamp = 0 ;	
+	unsigned long streamlasttimestamp = 0 ;	
 	now = RTMP_GetTime();
 	lastUpdate = now - 1000;
 	do
@@ -84,10 +127,26 @@ int Download(RTMP * rtmp, FILE * file, int bStdoutMode, int bLiveStream)
 			}
 			size += nRead;
 
-			//RTMP_LogPrintf("write %dbytes (%.1f kB)\n", nRead, nRead/1024.0);
+			///////log 
+			struct timeval tnow ;
+			gettimeofday(&tnow, NULL);
+			unsigned long t2_ms = tnow.tv_sec * 1000 + tnow.tv_usec/1000;
+			if( lasttimestamp == 0 ) {
+				streamlasttimestamp = rtmp->m_read.timestamp ;//这个是音频流里面的时间戳。这个算出来的就是音频的码率
+				lasttimestamp = t2_ms ; //这个是我们收到数据的时间戳，这个算出来的是音频的实际接收码率
+				continue ;
+			}
+
+			float tmprate = (double)8*nRead/1024/( (double)(t2_ms-lasttimestamp)/1000)  ;
+			float streamtmprate = (double)8*nRead/1024/( (double)(rtmp->m_read.timestamp - streamlasttimestamp)/1000)  ;
+			KULV_LOG("RTMP_Read,ms,nread:%d\trecv timediff:%dms,receive rate:%.2fkbps\tstream timediff:%dms,stream rate:%.1fkbps.", 
+					nRead, t2_ms-lasttimestamp, tmprate, rtmp->m_read.timestamp - streamlasttimestamp, streamtmprate );
+			lasttimestamp = t2_ms ;
+			streamlasttimestamp = rtmp->m_read.timestamp ;
+
 			now = RTMP_GetTime();
 			if (abs(now - lastUpdate) > 200) {
-				RTMP_LogStatus("\r%.3f kB / %.2f sec", (double) size / 1024.0, (double) (rtmp->m_read.timestamp) / 1000.0);
+				RTMP_LogStatus("\r%.3f kB / %.2f sec. recv speed:%.2f kbps. stream rate:%.2f kbps.", (double) size / 1024.0, (double) (rtmp->m_read.timestamp) / 1000.0, tmprate, streamtmprate);
 				lastUpdate = now;
 			}
 		}
@@ -147,7 +206,7 @@ int main(int argc, char **argv)
 
 	int nStatus = RD_SUCCESS;
 	int bStdoutMode = TRUE;	// if true print the stream directly to stdout, messages go to stderr
-	int bLiveStream = FALSE;	// is it a live stream? then we can't seek/resume
+	int bLiveStream = TRUE;	// is it a live stream? then we can't seek/resume
 
 	long int timeout = DEF_TIMEOUT;	// timeout connection after 120 seconds
 	RTMP rtmp = { 0 };
@@ -249,11 +308,15 @@ int main(int argc, char **argv)
 	/* Try to keep the stream moving if it pauses on us */
 	if (!bLiveStream )
 		rtmp.Link.lFlags |= RTMP_LF_BUFX;
+	else {
+		rtmp.Link.lFlags |= RTMP_LF_LIVE ;
+	}
 
+	printf("aaaaa:%d\n", rtmp.Link.lFlags ) ;
 	while (!RTMP_ctrlC)
 	{
 		RTMP_Log(RTMP_LOGDEBUG, "Setting buffer time to: %dms", DEF_BUFTIME);
-		RTMP_SetBufferMS(&rtmp, DEF_BUFTIME);//告诉服务器帮我缓存多久
+		RTMP_SetBufferMS(&rtmp, 2000);//告诉服务器帮我缓存多久
 
 		RTMP_LogPrintf("Connecting ...\n");
 		if (!RTMP_Connect(&rtmp, NULL))	{//建立连接,发送"connect"

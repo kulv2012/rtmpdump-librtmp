@@ -118,7 +118,7 @@ extern "C"
   {
     uint8_t m_headerType;
     uint8_t m_packetType;
-    uint8_t m_hasAbsTimestamp;	/* timestamp absolute or relative? */
+    uint8_t m_hasAbsTimestamp;	/* timestamp absolute or relative? *///包头部有12个字节长，后面有时间戳
     int m_nChannel;
     uint32_t m_nTimeStamp;	/* timestamp */
     int32_t m_nInfoField2;	/* last 4 bytes in a long header */
@@ -256,9 +256,9 @@ extern "C"
     int m_numCalls;
     RTMP_METHOD *m_methodCalls;	/* remote method calls queue */
 
-    int m_channelsAllocatedIn;
+    int m_channelsAllocatedIn;//当前申请的信道最大值-1
     int m_channelsAllocatedOut;
-    RTMPPacket **m_vecChannelsIn;
+    RTMPPacket **m_vecChannelsIn;//不同信道输出的数据包存放再这里
     RTMPPacket **m_vecChannelsOut;
     int *m_channelTimestamp;	/* abs timestamp of last packet */
 

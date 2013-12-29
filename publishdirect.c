@@ -20,7 +20,8 @@ bool ReadTime(int *itime,FILE*fp);
 //RTMP_XXX()返回0表示失败，1表示成功
 RTMP*rtmp=NULL;//rtmp应用指针
 RTMPPacket*packet=NULL;//rtmp包结构
-char* rtmpurl="rtmp://127.0.0.1:1935/live/hwtest2";//连接的URL
+//char* rtmpurl="rtmp://127.0.0.1:1935/live/hwtest2";//连接的URL
+char* rtmpurl="rtmp://59.151.33.38/live/haiwen";//连接的URL
 //char* flvfile="xiaokai.flv";//读取的flv文件
 //char* flvfile="130038728.mp3";//读取的flv文件
 
